@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 run() {
-    time target/release/dashmap-test $@
+    timeout 300 time target/release/dashmap-test $@ || echo TIMEOUT
 }
 
 cargo build --release
