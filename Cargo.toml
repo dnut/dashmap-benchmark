@@ -1,5 +1,5 @@
 [package]
-name = "dashmap-test"
+name = "dashmap-benchmark"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,5 +7,6 @@ edition = "2021"
 clap = { version = "4.4.18", features = ["derive"] }
 dashmap = "5.5.3"
 parking_lot = "0.12.1"
-sysinfo = "*"
-rand = "*"
+sysinfo = "0.30.5"
+rand = "0.8.5"
+rand_distr = "0.4.3"

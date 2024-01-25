@@ -1,6 +1,6 @@
 use clap::{command, Parser, Subcommand, ValueEnum};
 
-use dashmap_test::{new_dashmap_fn, new_rwlock_hashmap, test_contention, test_init_many_maps};
+use dashmap_benchmark::{new_dashmap_fn, new_rwlock_hashmap, test_contention, test_init_many_maps};
 
 fn main() {
     let args = Args::parse();
@@ -9,14 +9,18 @@ fn main() {
         args.dashmap_shards()
     );
     match args.test {
-        Test::Init { entries } => match args.map {
+        Test::Init {
+            entries,
+            inner_items,
+        } => match args.map {
             MapType::Dashmap => test_init_many_maps(
                 entries,
+                inner_items,
                 new_dashmap_fn(args.dashmap_shards()),
                 new_dashmap_fn(args.dashmap_shards()),
             ),
             MapType::Hashmap => {
-                test_init_many_maps(entries, new_rwlock_hashmap, new_rwlock_hashmap)
+                test_init_many_maps(entries, inner_items, new_rwlock_hashmap, new_rwlock_hashmap)
             }
         },
         Test::Contention {
@@ -93,6 +97,10 @@ enum Test {
         /// Number of inner maps to insert into the outer map
         #[arg(short, long, default_value_t = 10_000_000)]
         entries: u64,
+
+        /// Number of items to insert into each inner map on average (normally distributed)
+        #[arg(short, long, default_value_t = 0)]
+        inner_items: u64,
     },
 
     /// Using a single map, executes read and write operations at the specified rates.

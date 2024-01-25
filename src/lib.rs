@@ -8,6 +8,7 @@ use std::{collections::hash_map::RandomState, ops::Deref};
 use dashmap::DashMap;
 use parking_lot::{RwLock, RwLockReadGuard};
 use rand::Rng;
+use rand_distr::{Distribution, Normal};
 
 pub fn new_dashmap_fn<K: Eq + Hash, V>(shards: usize) -> impl Fn() -> DashMap<K, V> {
     move || DashMap::with_capacity_and_hasher_and_shard_amount(0, RandomState::default(), shards)
@@ -20,16 +21,23 @@ pub fn new_rwlock_hashmap<K: Eq + Hash, V>() -> RwLock<HashMap<K, V>> {
 /// Initializes an outer map and fills it with inner maps
 pub fn test_init_many_maps<OuterMap: Map<u64, InnerMap>, InnerMap: Map<u64, ()>>(
     entries: u64,
+    ave_inner_items: u64,
     new_outer: impl Fn() -> OuterMap,
     new_inner: impl Fn() -> InnerMap,
 ) {
+    let mut rng = rand::thread_rng();
+    let dist = Normal::new(ave_inner_items as f64, ave_inner_items as f64 / 3.0).unwrap();
     let drop_start = {
         let start = SystemTime::now();
         let dm: OuterMap = new_outer();
         let mut peak_mem_megs = 0;
         for i in 0..entries {
             let inner_map: InnerMap = new_inner();
-            inner_map.insert(i, ());
+            if ave_inner_items != 0 {
+                for x in 0..(dist.sample(&mut rng) as u64) {
+                    inner_map.insert(x, ());
+                }
+            }
             dm.insert(i, inner_map);
             if i % (entries / 100) == 0 {
                 peak_mem_megs = std::cmp::max(peak_mem_megs, memory_usage().unwrap() / 1_000_000);
