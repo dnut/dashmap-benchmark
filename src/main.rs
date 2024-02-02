@@ -1,6 +1,8 @@
 use clap::{command, Parser, Subcommand, ValueEnum};
 
-use dashmap_benchmark::{new_dashmap_fn, new_rwlock_hashmap, test_contention, test_init_many_maps};
+use dashmap_benchmark::{
+    new_dashmap_fn, new_rwlock_hashmap, test_contention, test_init_many_maps, ContentionFocus,
+};
 
 fn main() {
     let args = Args::parse();
@@ -24,26 +26,29 @@ fn main() {
             }
         },
         Test::Contention {
+            focus,
             max_entries,
             prior_writes,
             writes_per_second,
             reads_per_second,
-            expensive_reads,
+            cheap_reads,
         } => match args.map {
             MapType::Dashmap => test_contention(
+                focus,
                 max_entries.unwrap_or(prior_writes + writes_per_second),
                 prior_writes,
                 writes_per_second,
                 reads_per_second,
-                expensive_reads,
+                cheap_reads,
                 new_dashmap_fn(args.dashmap_shards())(),
             ),
             MapType::Hashmap => test_contention(
+                focus,
                 max_entries.unwrap_or(prior_writes + writes_per_second),
                 prior_writes,
                 writes_per_second,
                 reads_per_second,
-                expensive_reads,
+                cheap_reads,
                 new_rwlock_hashmap(),
             ),
         },
@@ -128,9 +133,14 @@ enum Test {
         #[arg(short, long, default_value_t = 10_000_000)]
         reads_per_second: u64,
 
-        /// If false, each read is just a single `get` from the map.
-        /// If true, each read copies all keys from the map into a vec.
+        /// If true, each read is just a single `get` from the map.
+        /// If false, each read copies all keys from the map into a vec.
         #[arg(short, long, default_value_t = false)]
-        expensive_reads: bool,
+        cheap_reads: bool,
+
+        /// If a focus is selected, that means the other operation will be looped infinitely.
+        /// The test ends as soon as the focused operation completes.
+        #[arg(short, long)]
+        focus: Option<ContentionFocus>,
     },
 }

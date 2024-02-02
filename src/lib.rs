@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::hash_map::RandomState, ops::Deref};
 
+use clap::ValueEnum;
 use dashmap::DashMap;
 use parking_lot::{RwLock, RwLockReadGuard};
 use rand::Rng;
@@ -57,16 +58,26 @@ pub fn test_init_many_maps<OuterMap: Map<u64, InnerMap>, InnerMap: Map<u64, ()>>
     print_duration(drop_start, "Drop");
 }
 
+/// If a focus is selected, that means the other operation will be looped infinitely.
+/// The test ends as soon as the focused operation completes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ContentionFocus {
+    Read,
+    Write,
+}
+
 pub fn test_contention(
+    focus: Option<ContentionFocus>,
     range: u64,
     prior_writes: u64,
     writes_per_second: u64,
     reads_per_second: u64,
-    expensive_reads: bool,
+    cheap_reads: bool,
     map: impl Map<u64, ()> + Send + Sync + 'static,
 ) {
     let map = Arc::new(map);
-    let mut handles = vec![];
+    let mut reader_handles = vec![];
+    let mut writer_handles = vec![];
     let threads_each = usize::from(std::thread::available_parallelism().unwrap()) as u64;
     let write_gap_nanos = gap_nanos(threads_each, writes_per_second);
     let read_gap_nanos = gap_nanos(threads_each, reads_per_second);
@@ -79,48 +90,72 @@ pub fn test_contention(
 
     let start = SystemTime::now();
     for _ in 0..threads_each {
-        // Attempt to write data concurrently for ~1 second at the specified rate
+        // Attempt to write data concurrently for ~1 second at the specified rate (or indefinitely if read is focus)
         if let Some(write_gap_nanos) = write_gap_nanos {
             let my_map = map.clone();
-            handles.push(std::thread::spawn(move || {
+            writer_handles.push(std::thread::spawn(move || {
                 let mut rng = rand::thread_rng();
                 let mut next = unix_timestamp_nanos();
-                for _ in 0..(writes_per_second / threads_each) {
-                    let now = unix_timestamp_nanos();
-                    if now < next {
-                        std::thread::sleep(Duration::from_nanos((next - now) as u64));
+                loop {
+                    for _ in 0..(writes_per_second / threads_each) {
+                        let now = unix_timestamp_nanos();
+                        if now < next {
+                            std::thread::sleep(Duration::from_nanos((next - now) as u64));
+                        }
+                        my_map.insert(rng.gen_range(0..=range), ());
+                        next += write_gap_nanos;
                     }
-                    my_map.insert(rng.gen_range(0..=range), ());
-                    next += write_gap_nanos;
+                    if focus != Some(ContentionFocus::Read) {
+                        break;
+                    }
                 }
             }));
         }
-        // Attempt to read data concurrently for ~1 second at the specified rate
+        // Attempt to read data concurrently for ~1 second at the specified rate (or indefinitely if write is focus)
         if let Some(read_gap_nanos) = read_gap_nanos {
             let my_map = map.clone();
-            handles.push(std::thread::spawn(move || {
+            reader_handles.push(std::thread::spawn(move || {
                 let mut rng = rand::thread_rng();
                 let mut next = unix_timestamp_nanos();
-                for _ in 0..(reads_per_second / threads_each) {
-                    let now = unix_timestamp_nanos();
-                    if now < next {
-                        std::thread::sleep(Duration::from_nanos((next - now) as u64));
+                loop {
+                    for _ in 0..(reads_per_second / threads_each) {
+                        let now = unix_timestamp_nanos();
+                        if now < next {
+                            std::thread::sleep(Duration::from_nanos((next - now) as u64));
+                        }
+                        if cheap_reads {
+                            my_map.get(&rng.gen_range(0..=range));
+                        } else {
+                            my_map.keys();
+                        }
+                        next += read_gap_nanos;
                     }
-                    if expensive_reads {
-                        my_map.keys();
-                    } else {
-                        my_map.get(&rng.gen_range(0..=range));
+                    if focus != Some(ContentionFocus::Write) {
+                        break;
                     }
-                    next += read_gap_nanos;
                 }
             }));
         }
     }
 
-    for handle in handles {
-        handle.join().unwrap();
+    let write_waiter = std::thread::spawn(move || {
+        for handle in writer_handles {
+            handle.join().unwrap();
+        }
+        print_duration(start, "Contention test (writers)");
+    });
+    let read_waiter = std::thread::spawn(move || {
+        for handle in reader_handles {
+            handle.join().unwrap();
+        }
+        print_duration(start, "Contention test (readers)");
+    });
+    if focus != Some(ContentionFocus::Read) {
+        write_waiter.join().unwrap();
     }
-    print_duration(start, "\nContention test");
+    if focus != Some(ContentionFocus::Write) {
+        read_waiter.join().unwrap();
+    }
 }
 
 pub fn gap_nanos(threads: u64, rate_per_second: u64) -> Option<u128> {
